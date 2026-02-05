@@ -1,0 +1,14 @@
+# pyproject.toml
+[project]
+name = "comfyui-crosshairguidelines" # Unique identifier for your node. Immutable after creation.
+description = "Crosshair guidelines to help align nodes and groups while moving or resizing."
+version = "0.0.1" # Custom node version. Must be semantically versioned.
+license = { file = "LICENSE.txt" }
+dependencies  = [] # Filled in from requirements.txt
+
+[project.urls]
+Repository = "https://github.com/SparknightLLC/ComfyUI-CrosshairGuidelines"
+
+[tool.comfy]
+PublisherId = "sparknight" # TODO (fill in Publisher ID from Comfy Registry Website).
+DisplayName = "ComfyUI-CrosshairGuidelines" # Display name for the Custom Node. Can be changed later.
