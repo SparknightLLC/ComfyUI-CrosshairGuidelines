@@ -9,6 +9,8 @@ const SETTING_THICKNESS_ID = "crosshair_guidelines.thickness";
 const SETTING_LINK_OPACITY_ID = "crosshair_guidelines.link_opacity";
 const SETTING_NODE_OPACITY_ID = "crosshair_guidelines.node_opacity";
 const SETTING_HIDE_ACTIVE_OUTLINE_ID = "crosshair_guidelines.hide_active_outline";
+const SETTINGS_PANEL_LABEL = "Crosshair Guidelines";
+const SETTINGS_SECTION_LABEL = "General";
 const LEGACY_SETTING_STORAGE_KEY = "crosshair_guidelines.enabled";
 const DEFAULT_LINE_COLOR = "#0B8CE9";
 const DEFAULT_LINE_WIDTH = 2;
@@ -32,6 +34,8 @@ const OPACITY_EXEMPT_BOUNDS_PADDING_PX = 8;
 const OPACITY_EXEMPT_SLOT_RADIUS_PX = 10;
 const OPACITY_EXEMPT_DRAW_POINT_PADDING_PX = 2;
 const ACTIVITY_SCAN_INTERVAL_MS = 32;
+const SLOT_LABEL_HITBOX_PX = 88;
+const SLOT_ROW_HITBOX_PX = 16;
 const DOM_NODE_SELECTORS = [
 	"[data-node-id]",
 	"[data-nodeid]",
@@ -1103,8 +1107,33 @@ function get_graph_mouse(canvas)
 	return null;
 }
 
-function get_event_screen_point(event)
+function get_event_screen_point(event, canvas, prefer_canvas_offsets = false)
 {
+	if (prefer_canvas_offsets)
+	{
+		if (typeof event?.offsetX === "number" && typeof event?.offsetY === "number")
+		{
+			return [event.offsetX, event.offsetY];
+		}
+		if (typeof event?.canvasX === "number" && typeof event?.canvasY === "number")
+		{
+			return [event.canvasX, event.canvasY];
+		}
+	}
+	if (canvas
+		&& typeof event?.clientX === "number"
+		&& typeof event?.clientY === "number")
+	{
+		const canvas_element = get_canvas_element(canvas);
+		if (canvas_element && typeof canvas_element.getBoundingClientRect === "function")
+		{
+			const rect = canvas_element.getBoundingClientRect();
+			return [
+				event.clientX - rect.left,
+				event.clientY - rect.top
+			];
+		}
+	}
 	if (typeof event?.offsetX === "number" && typeof event?.offsetY === "number")
 	{
 		return [event.offsetX, event.offsetY];
@@ -1157,7 +1186,7 @@ function get_event_graph_point(canvas, event)
 	{
 		return [event.graph_x, event.graph_y];
 	}
-	const screen_point = get_event_screen_point(event);
+	const screen_point = get_event_screen_point(event, canvas, true);
 	if (!screen_point)
 	{
 		return null;
@@ -1308,7 +1337,18 @@ function is_connection_handle_target(target)
 		".lg-slot.output",
 		".lg-slot-output",
 		"[data-slot-type='output']",
-		"[data-slot='output']"
+		"[data-slot='output']",
+		".input",
+		".node-input",
+		".input-slot",
+		".slot-input",
+		".node-slot.input",
+		".slot.input",
+		".comfy-input-slot",
+		".lg-slot.input",
+		".lg-slot-input",
+		"[data-slot-type='input']",
+		"[data-slot='input']"
 	].join(", ");
 	return !!element.closest(selector);
 }
@@ -1332,6 +1372,8 @@ function is_pointer_near_output_slot(canvas, node, graph_point)
 	const safe_scale = Number.isFinite(scale) && scale > 0 ? scale : 1;
 	const threshold = 10 / safe_scale;
 	const threshold_sq = threshold * threshold;
+	const label_span = SLOT_LABEL_HITBOX_PX / safe_scale;
+	const row_threshold = SLOT_ROW_HITBOX_PX / safe_scale;
 	for (let index = 0; index < outputs.length; index += 1)
 	{
 		const position = node.getConnectionPos(false, index);
@@ -1345,8 +1387,88 @@ function is_pointer_near_output_slot(canvas, node, graph_point)
 		{
 			return true;
 		}
+		const within_row = Math.abs(dy) <= row_threshold;
+		const within_output_label = graph_point[0] >= (position[0] - label_span)
+			&& graph_point[0] <= (position[0] + threshold);
+		if (within_row && within_output_label)
+		{
+			return true;
+		}
 	}
 	return false;
+}
+
+function is_pointer_near_input_slot(canvas, node, graph_point)
+{
+	if (!canvas || !node || !graph_point)
+	{
+		return false;
+	}
+	if (typeof node.getConnectionPos !== "function")
+	{
+		return false;
+	}
+	const inputs = Array.isArray(node.inputs) ? node.inputs : [];
+	if (inputs.length === 0)
+	{
+		return false;
+	}
+	const scale = canvas?.ds?.scale;
+	const safe_scale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+	const threshold = 10 / safe_scale;
+	const threshold_sq = threshold * threshold;
+	const label_span = SLOT_LABEL_HITBOX_PX / safe_scale;
+	const row_threshold = SLOT_ROW_HITBOX_PX / safe_scale;
+	for (let index = 0; index < inputs.length; index += 1)
+	{
+		const position = node.getConnectionPos(true, index);
+		if (!Array.isArray(position) || position.length < 2)
+		{
+			continue;
+		}
+		const dx = graph_point[0] - position[0];
+		const dy = graph_point[1] - position[1];
+		if ((dx * dx + dy * dy) <= threshold_sq)
+		{
+			return true;
+		}
+		const within_row = Math.abs(dy) <= row_threshold;
+		const within_input_label = graph_point[0] >= (position[0] - threshold)
+			&& graph_point[0] <= (position[0] + label_span);
+		if (within_row && within_input_label)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+function is_pointer_near_connection_slot(canvas, node, graph_point)
+{
+	return is_pointer_near_output_slot(canvas, node, graph_point)
+		|| is_pointer_near_input_slot(canvas, node, graph_point);
+}
+
+function get_node_near_connection_slot(canvas, graph_point)
+{
+	if (!canvas || !graph_point)
+	{
+		return null;
+	}
+	const nodes = get_graph_nodes(canvas);
+	for (let index = nodes.length - 1; index >= 0; index -= 1)
+	{
+		const node = nodes[index];
+		if (!node)
+		{
+			continue;
+		}
+		if (is_pointer_near_connection_slot(canvas, node, graph_point))
+		{
+			return node;
+		}
+	}
+	return null;
 }
 
 function record_pointer_activity(canvas)
@@ -1369,6 +1491,8 @@ function set_pointer_down(canvas, is_down, point)
 	{
 		canvas.__crosshair_active_target = null;
 		canvas.__crosshair_force_hide_until = 0;
+		canvas.__crosshair_pointer_dragging = false;
+		canvas.__crosshair_dragging = false;
 		canvas.__crosshair_last_node_states = new Map();
 		canvas.__crosshair_last_group_states = new Map();
 		canvas.__crosshair_activity_last_time = 0;
@@ -1378,6 +1502,8 @@ function set_pointer_down(canvas, is_down, point)
 		canvas.__crosshair_node_opacity_exempt_node_ids = null;
 		canvas.__crosshair_node_opacity_exempt_group_ids = null;
 		canvas.__crosshair_node_opacity_exempt_bounds = null;
+		canvas.__crosshair_node_resize_session_target = null;
+		canvas.__crosshair_node_resize_session_corner = null;
 		if (point)
 		{
 			canvas.__crosshair_pointer_down_pos = point;
@@ -1398,9 +1524,12 @@ function set_pointer_down(canvas, is_down, point)
 		canvas.__crosshair_node_resize_latched = false;
 		canvas.__crosshair_node_resize_target = null;
 		canvas.__crosshair_node_resize_corner = null;
+		canvas.__crosshair_node_resize_session_target = null;
+		canvas.__crosshair_node_resize_session_corner = null;
 		canvas.__crosshair_drag_node_target = null;
 		canvas.__crosshair_drag_group_target = null;
 		canvas.__crosshair_drag_start_on_selected = false;
+		canvas.__crosshair_multi_select_modifier_down = false;
 		canvas.__crosshair_drag_start = null;
 		canvas.__crosshair_node_opacity_active = false;
 		canvas.__crosshair_node_opacity_multiplier = 1;
@@ -1531,6 +1660,38 @@ function get_global_pointer_on_connection()
 	return !!window.__crosshair_global_pointer_on_connection;
 }
 
+function is_multi_select_modifier_event(event)
+{
+	return !!(event?.ctrlKey || event?.metaKey);
+}
+
+function update_multi_select_modifier(canvas, event)
+{
+	const modifier_active = is_multi_select_modifier_event(event);
+	if (canvas)
+	{
+		canvas.__crosshair_multi_select_modifier_down = modifier_active;
+	}
+	if (typeof window !== "undefined")
+	{
+		window.__crosshair_multi_select_modifier_down = modifier_active;
+	}
+	return modifier_active;
+}
+
+function is_multi_select_modifier_active(canvas)
+{
+	if (canvas?.__crosshair_multi_select_modifier_down)
+	{
+		return true;
+	}
+	if (typeof window === "undefined")
+	{
+		return false;
+	}
+	return !!window.__crosshair_multi_select_modifier_down;
+}
+
 function install_global_pointer_listeners(canvas)
 {
 	if (typeof window === "undefined")
@@ -1556,6 +1717,7 @@ function install_global_pointer_listeners(canvas)
 		{
 			return;
 		}
+		update_multi_select_modifier(null, event);
 		if (is_interactive_input_target(event?.target))
 		{
 			window.__crosshair_global_pointer_on_input = true;
@@ -1590,6 +1752,9 @@ function install_global_pointer_listeners(canvas)
 			entry.__crosshair_node_resize_latched = false;
 			entry.__crosshair_node_resize_target = null;
 			entry.__crosshair_node_resize_corner = null;
+			entry.__crosshair_node_resize_session_target = null;
+			entry.__crosshair_node_resize_session_corner = null;
+			entry.__crosshair_multi_select_modifier_down = is_multi_select_modifier_event(event);
 			if (target && target instanceof Element)
 			{
 				const element = get_canvas_element(entry);
@@ -1601,27 +1766,34 @@ function install_global_pointer_listeners(canvas)
 			}
 		}
 		const target_entries = matches.length ? matches : entries;
-		const screen_point = get_event_screen_point(event);
 		for (const entry of target_entries)
 		{
 			if (!entry)
 			{
 				continue;
 			}
+			const screen_point = get_event_screen_point(event, entry);
 			entry.__crosshair_pointer_on_input = false;
 			entry.__crosshair_pointer_on_connection = false;
 			const graph_point = screen_point ? screen_point_to_graph(entry, screen_point) : null;
+			const near_connection_node = graph_point ? get_node_near_connection_slot(entry, graph_point) : null;
 			entry.__crosshair_pointer_node = screen_point
 				? (get_node_at_screen_point(entry, screen_point)
-					|| (graph_point ? get_node_at_graph_point(entry, graph_point) : null))
-				: (graph_point ? get_node_at_graph_point(entry, graph_point) : null);
+					|| (graph_point ? get_node_at_graph_point(entry, graph_point) : null)
+					|| near_connection_node)
+				: ((graph_point ? get_node_at_graph_point(entry, graph_point) : null) || near_connection_node);
 			if (entry.__crosshair_pointer_node)
 			{
 				entry.__crosshair_latched_pointer_node = entry.__crosshair_pointer_node;
 			}
-			if (!entry.__crosshair_pointer_on_connection && graph_point && entry.__crosshair_pointer_node)
+			if (!entry.__crosshair_pointer_on_connection && graph_point && (entry.__crosshair_pointer_node || near_connection_node))
 			{
-				entry.__crosshair_pointer_on_connection = is_pointer_near_output_slot(entry, entry.__crosshair_pointer_node, graph_point);
+				const slot_node = entry.__crosshair_pointer_node || near_connection_node;
+				entry.__crosshair_pointer_on_connection = is_pointer_near_connection_slot(entry, slot_node, graph_point);
+			}
+			if (!entry.__crosshair_pointer_on_connection && has_connection_drag(entry))
+			{
+				entry.__crosshair_pointer_on_connection = true;
 			}
 			const resize_candidates = collect_resize_candidates(entry);
 			latch_node_resize_candidate(entry, resize_candidates, graph_point, screen_point);
@@ -1645,17 +1817,19 @@ function install_global_pointer_listeners(canvas)
 		{
 			return;
 		}
-		const screen_point = get_event_screen_point(event);
-		if (!screen_point)
-		{
-			return;
-		}
+		update_multi_select_modifier(null, event);
 		const canvases = window.__crosshair_guidelines_canvases;
 		if (canvases instanceof Set)
 		{
 			for (const entry of canvases)
 			{
 				if (!entry || !entry.__crosshair_pointer_down)
+				{
+					continue;
+				}
+				entry.__crosshair_multi_select_modifier_down = is_multi_select_modifier_event(event);
+				const screen_point = get_event_screen_point(event, entry);
+				if (!screen_point)
 				{
 					continue;
 				}
@@ -1678,6 +1852,12 @@ function install_global_pointer_listeners(canvas)
 		}
 		if (canvas && canvas.__crosshair_pointer_down)
 		{
+			canvas.__crosshair_multi_select_modifier_down = is_multi_select_modifier_event(event);
+			const screen_point = get_event_screen_point(event, canvas);
+			if (!screen_point)
+			{
+				return;
+			}
 			canvas.__crosshair_last_mouse = screen_point;
 			canvas.__crosshair_last_mouse_screen = screen_point;
 			if (!canvas.__crosshair_pointer_down_pos)
@@ -1713,13 +1893,45 @@ function install_global_pointer_listeners(canvas)
 		window.__crosshair_global_pointer_on_input = false;
 		window.__crosshair_global_pointer_on_connection = false;
 	};
+	const on_key_down = (event) =>
+	{
+		if (event?.key === "Control" || event?.key === "Meta")
+		{
+			window.__crosshair_multi_select_modifier_down = true;
+		}
+	};
+	const on_key_up = (event) =>
+	{
+		if (event?.key === "Control" || event?.key === "Meta")
+		{
+			window.__crosshair_multi_select_modifier_down = false;
+			const canvases = window.__crosshair_guidelines_canvases;
+			if (canvases instanceof Set)
+			{
+				for (const entry of canvases)
+				{
+					if (entry)
+					{
+						entry.__crosshair_multi_select_modifier_down = false;
+					}
+				}
+			}
+		}
+	};
+	const on_window_blur = () =>
+	{
+		reset();
+		window.__crosshair_multi_select_modifier_down = false;
+	};
 	window.addEventListener("pointerdown", on_global_down, { passive: true, capture: true });
 	window.addEventListener("mousedown", on_global_down, { passive: true, capture: true });
 	window.addEventListener("pointermove", on_global_move, { passive: true, capture: true });
 	window.addEventListener("mousemove", on_global_move, { passive: true, capture: true });
 	window.addEventListener("pointerup", reset, { passive: true, capture: true });
 	window.addEventListener("mouseup", reset, { passive: true, capture: true });
-	window.addEventListener("blur", reset, { passive: true });
+	window.addEventListener("keydown", on_key_down, { passive: true, capture: true });
+	window.addEventListener("keyup", on_key_up, { passive: true, capture: true });
+	window.addEventListener("blur", on_window_blur, { passive: true });
 	window.__crosshair_global_pointer_listeners_installed = true;
 }
 
@@ -1784,25 +1996,33 @@ function install_pointer_listeners(canvas)
 		{
 			return;
 		}
+		update_multi_select_modifier(canvas, event);
 		canvas.__crosshair_pointer_on_input = is_interactive_input_target(event?.target);
 		canvas.__crosshair_pointer_on_connection = is_connection_handle_target(event?.target);
-		const screen_point = get_event_screen_point(event);
+		const screen_point = get_event_screen_point(event, canvas, true);
 		const graph_point = get_event_graph_point(canvas, event)
 			|| screen_point_to_graph(canvas, screen_point)
 			|| get_graph_mouse(canvas);
+		const near_connection_node = graph_point ? get_node_near_connection_slot(canvas, graph_point) : null;
 		canvas.__crosshair_pointer_node = screen_point
 			? (get_node_at_screen_point(canvas, screen_point)
-				|| (graph_point ? get_node_at_graph_point(canvas, graph_point) : null))
-			: (graph_point ? get_node_at_graph_point(canvas, graph_point) : null);
+				|| (graph_point ? get_node_at_graph_point(canvas, graph_point) : null)
+				|| near_connection_node)
+			: ((graph_point ? get_node_at_graph_point(canvas, graph_point) : null) || near_connection_node);
 		if (canvas.__crosshair_pointer_node
 			&& !canvas.__crosshair_pointer_on_input
 			&& !canvas.__crosshair_pointer_on_connection)
 		{
 			canvas.__crosshair_latched_pointer_node = canvas.__crosshair_pointer_node;
 		}
-		if (!canvas.__crosshair_pointer_on_connection && graph_point && canvas.__crosshair_pointer_node)
+		if (!canvas.__crosshair_pointer_on_connection && graph_point && (canvas.__crosshair_pointer_node || near_connection_node))
 		{
-			canvas.__crosshair_pointer_on_connection = is_pointer_near_output_slot(canvas, canvas.__crosshair_pointer_node, graph_point);
+			const slot_node = canvas.__crosshair_pointer_node || near_connection_node;
+			canvas.__crosshair_pointer_on_connection = is_pointer_near_connection_slot(canvas, slot_node, graph_point);
+		}
+		if (!canvas.__crosshair_pointer_on_connection && has_connection_drag(canvas))
+		{
+			canvas.__crosshair_pointer_on_connection = true;
 		}
 		if (screen_point)
 		{
@@ -1833,17 +2053,20 @@ function install_pointer_listeners(canvas)
 
 	const on_pointer_up = () =>
 	{
+		canvas.__crosshair_multi_select_modifier_down = false;
 		reset_interaction_state(canvas);
 	};
 
 	const on_pointer_cancel = () =>
 	{
+		canvas.__crosshair_multi_select_modifier_down = false;
 		reset_interaction_state(canvas);
 	};
 
 	const on_pointer_move = (event) =>
 	{
-		const screen_point = get_event_screen_point(event);
+		update_multi_select_modifier(canvas, event);
+		const screen_point = get_event_screen_point(event, canvas, true);
 		const graph_point = get_event_graph_point(canvas, event)
 			|| screen_point_to_graph(canvas, screen_point)
 			|| get_graph_mouse(canvas);
@@ -2563,12 +2786,11 @@ function get_resize_candidate_node(canvas, nodes, graph_point, screen_point)
 			{
 				continue;
 			}
-			const bounds = get_node_bounds(node);
 			const corners = [
-				[bounds.left, bounds.top],
-				[bounds.right, bounds.top],
-				[bounds.left, bounds.bottom],
-				[bounds.right, bounds.bottom]
+				[node_bounds.left, node_bounds.top],
+				[node_bounds.right, node_bounds.top],
+				[node_bounds.left, node_bounds.bottom],
+				[node_bounds.right, node_bounds.bottom]
 			];
 			for (const corner of corners)
 			{
@@ -2618,9 +2840,8 @@ function get_resize_candidate_node(canvas, nodes, graph_point, screen_point)
 		{
 			continue;
 		}
-		const box_bounds = get_node_bounds(node);
-		const corner = get_closest_corner(box_bounds, target_graph_point);
-		const corner_point = get_corner_point(box_bounds, corner);
+		const corner = get_closest_corner(bounds, target_graph_point);
+		const corner_point = get_corner_point(bounds, corner);
 		if (!corner_point)
 		{
 			continue;
@@ -5326,6 +5547,19 @@ function compute_interaction_state(canvas, ctx)
 	const links_opacity_before = Number.isFinite(canvas.__crosshair_links_current_opacity)
 		? canvas.__crosshair_links_current_opacity
 		: 1;
+	if (is_multi_select_modifier_active(canvas))
+	{
+		canvas.__crosshair_pointer_node = null;
+		canvas.__crosshair_drag_node_target = null;
+		canvas.__crosshair_drag_group_target = null;
+		canvas.__crosshair_node_resize_latched = false;
+		canvas.__crosshair_node_resize_target = null;
+		canvas.__crosshair_node_resize_corner = null;
+		canvas.__crosshair_node_resize_session_target = null;
+		canvas.__crosshair_node_resize_session_corner = null;
+		canvas.__crosshair_active_target = null;
+		return clear_interaction_visuals(canvas, ctx);
+	}
 	if (pointer_down_now && !has_local_pointer && get_global_pointer_on_input())
 	{
 		canvas.__crosshair_pointer_node = null;
@@ -5394,6 +5628,8 @@ function compute_interaction_state(canvas, ctx)
 			canvas.__crosshair_node_resize_latched = false;
 			canvas.__crosshair_node_resize_target = null;
 			canvas.__crosshair_node_resize_corner = null;
+			canvas.__crosshair_node_resize_session_target = null;
+			canvas.__crosshair_node_resize_session_corner = null;
 			canvas.__crosshair_drag_start_on_selected = false;
 			canvas.__crosshair_drag_start = null;
 			canvas.__crosshair_global_pointer_latched = true;
@@ -5422,6 +5658,8 @@ function compute_interaction_state(canvas, ctx)
 	let resize_corner_hint = (canvas.__crosshair_node_resize_latched && canvas.__crosshair_node_resize_corner)
 		? canvas.__crosshair_node_resize_corner
 		: null;
+	let resize_session_target = canvas.__crosshair_node_resize_session_target || null;
+	let resize_session_corner = canvas.__crosshair_node_resize_session_corner || null;
 	const has_resize_corner = (!!canvas.resizing_node_corner
 		|| !!canvas.resizingNodeCorner
 		|| !!canvas.resizing_corner
@@ -5473,6 +5711,52 @@ function compute_interaction_state(canvas, ctx)
 	{
 		drag_start_on_selected = true;
 	}
+	const resize_signal_active = !!resize_node_candidate
+		|| has_resize_corner
+		|| !!activity?.resize_node
+		|| !!canvas.resizing_node
+		|| !!canvas.node_resizing
+		|| !!canvas.resizingNode
+		|| !!canvas.nodeResizing
+		|| !!canvas.resizing_node_corner
+		|| !!canvas.resizingNodeCorner
+		|| !!canvas.resizing_corner
+		|| !!canvas.resizingCorner
+		|| !!canvas.__crosshair_node_resize_latched;
+	if (pointer_down_now && resize_signal_active)
+	{
+		resize_session_target = resize_node_candidate
+			|| activity?.resize_node
+			|| drag_node_target
+			|| resize_session_target;
+		if (resize_session_target)
+		{
+			canvas.__crosshair_node_resize_session_target = resize_session_target;
+		}
+		resize_session_corner = resize_corner_hint
+			|| canvas.__crosshair_node_resize_corner
+			|| activity?.resize_corner
+			|| resize_session_corner;
+		if (resize_session_corner)
+		{
+			canvas.__crosshair_node_resize_session_corner = resize_session_corner;
+		}
+	}
+	else if (!pointer_down_now)
+	{
+		canvas.__crosshair_node_resize_session_target = null;
+		canvas.__crosshair_node_resize_session_corner = null;
+		resize_session_target = null;
+		resize_session_corner = null;
+	}
+	if (pointer_down_now && !resize_node_candidate && resize_session_target)
+	{
+		resize_node_candidate = resize_session_target;
+	}
+	if (!resize_corner_hint && resize_session_corner)
+	{
+		resize_corner_hint = resize_session_corner;
+	}
 	const has_explicit_node_action = !!resize_node
 		|| !!drag_node
 		|| !!canvas.__crosshair_node_resize_latched
@@ -5481,7 +5765,8 @@ function compute_interaction_state(canvas, ctx)
 		|| !!drag_group_target
 		|| !!activity?.resize_group
 		|| !!activity?.move_group;
-	const has_latched_resize = !!canvas.__crosshair_node_resize_latched && !!canvas.__crosshair_node_resize_target;
+	const has_latched_resize = (!!canvas.__crosshair_node_resize_latched && !!canvas.__crosshair_node_resize_target)
+		|| !!resize_session_target;
 	if (has_group_activity && !has_explicit_node_action && !has_latched_resize)
 	{
 		resize_node_candidate = null;
@@ -5591,14 +5876,6 @@ function compute_interaction_state(canvas, ctx)
 		&& !canvas.__crosshair_pointer_on_connection)
 	{
 		canvas.__crosshair_latched_pointer_node = pointer_node;
-	}
-	if (pointer_down_now && pointer_node && !canvas.__crosshair_pointer_on_connection)
-	{
-		const graph_point = get_graph_mouse(canvas);
-		if (graph_point && is_pointer_near_output_slot(canvas, pointer_node, graph_point))
-		{
-			canvas.__crosshair_pointer_on_connection = true;
-		}
 	}
 	if (pointer_down_now)
 	{
@@ -5873,6 +6150,11 @@ function compute_interaction_state(canvas, ctx)
 	};
 }
 
+function build_setting_category(label)
+{
+	return [SETTINGS_PANEL_LABEL, SETTINGS_SECTION_LABEL, label];
+}
+
 function install_setting()
 {
 	if (!app?.ui?.settings)
@@ -5908,6 +6190,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_MOVE_MODE_ID,
+		category: build_setting_category("Crosshairs on move"),
 		name: "Crosshairs on move",
 		type: "combo",
 		options: [
@@ -5925,6 +6208,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_RESIZE_MODE_ID,
+		category: build_setting_category("Crosshairs on resize"),
 		name: "Crosshairs on resize",
 		type: "combo",
 		options: [
@@ -5943,6 +6227,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_IDLE_MODE_ID,
+		category: build_setting_category("Crosshairs when idle"),
 		name: "Crosshairs when idle",
 		type: "combo",
 		options: [
@@ -5960,6 +6245,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_COLOR_ID,
+		category: build_setting_category("Crosshair color"),
 		name: "Crosshair color",
 		type: "text",
 		defaultValue: line_color,
@@ -5977,6 +6263,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_THICKNESS_ID,
+		category: build_setting_category("Crosshair thickness"),
 		name: "Crosshair thickness",
 		type: "number",
 		defaultValue: line_width,
@@ -5991,6 +6278,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_LINK_OPACITY_ID,
+		category: build_setting_category("Opacity (links) while moving/resizing"),
 		name: "Opacity (links) while moving/resizing",
 		type: "text",
 		defaultValue: String(link_opacity_multiplier),
@@ -6005,6 +6293,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_NODE_OPACITY_ID,
+		category: build_setting_category("Opacity (nodes) while moving/resizing"),
 		name: "Opacity (nodes) while moving/resizing",
 		type: "text",
 		defaultValue: String(node_opacity_multiplier),
@@ -6019,6 +6308,7 @@ function install_setting()
 
 	app.ui.settings.addSetting({
 		id: SETTING_HIDE_ACTIVE_OUTLINE_ID,
+		category: build_setting_category("Hide active outline while moving/resizing"),
 		name: "Hide active outline while moving/resizing",
 		type: "boolean",
 		defaultValue: hide_active_outline,
@@ -6063,27 +6353,35 @@ function install_guidelines(canvas_override)
 		{
 			previous_mouse_down.call(this, event);
 		}
+		update_multi_select_modifier(this, event);
 		this.__crosshair_mouse_down = true;
 		this.__crosshair_dragging = false;
 		this.__crosshair_pointer_on_input = is_interactive_input_target(event?.target);
 		this.__crosshair_pointer_on_connection = is_connection_handle_target(event?.target);
-		const screen_point = get_event_screen_point(event) || [0, 0];
+		const screen_point = get_event_screen_point(event, this, true) || [0, 0];
 		const graph_point = get_event_graph_point(this, event)
 			|| get_graph_mouse(this)
 			|| screen_point_to_graph(this, screen_point);
+		const near_connection_node = graph_point ? get_node_near_connection_slot(this, graph_point) : null;
 		this.__crosshair_pointer_node = screen_point
 			? (get_node_at_screen_point(this, screen_point)
-				|| (graph_point ? get_node_at_graph_point(this, graph_point) : null))
-			: (graph_point ? get_node_at_graph_point(this, graph_point) : null);
+				|| (graph_point ? get_node_at_graph_point(this, graph_point) : null)
+				|| near_connection_node)
+			: ((graph_point ? get_node_at_graph_point(this, graph_point) : null) || near_connection_node);
 		if (this.__crosshair_pointer_node
 			&& !this.__crosshair_pointer_on_input
 			&& !this.__crosshair_pointer_on_connection)
 		{
 			this.__crosshair_latched_pointer_node = this.__crosshair_pointer_node;
 		}
-		if (!this.__crosshair_pointer_on_connection && graph_point && this.__crosshair_pointer_node)
+		if (!this.__crosshair_pointer_on_connection && graph_point && (this.__crosshair_pointer_node || near_connection_node))
 		{
-			this.__crosshair_pointer_on_connection = is_pointer_near_output_slot(this, this.__crosshair_pointer_node, graph_point);
+			const slot_node = this.__crosshair_pointer_node || near_connection_node;
+			this.__crosshair_pointer_on_connection = is_pointer_near_connection_slot(this, slot_node, graph_point);
+		}
+		if (!this.__crosshair_pointer_on_connection && has_connection_drag(this))
+		{
+			this.__crosshair_pointer_on_connection = true;
 		}
 		this.__crosshair_pointer_dragging = false;
 		set_pointer_down(this, true, screen_point);
@@ -6117,12 +6415,13 @@ function install_guidelines(canvas_override)
 		{
 			previous_mouse_move.call(this, event);
 		}
+		update_multi_select_modifier(this, event);
 		record_pointer_activity(this);
 		if (!this.__crosshair_mouse_down)
 		{
 			return;
 		}
-		const screen_point = get_event_screen_point(event)
+		const screen_point = get_event_screen_point(event, this, true)
 			|| this.__crosshair_last_mouse_screen
 			|| this.__crosshair_last_mouse
 			|| [0, 0];
