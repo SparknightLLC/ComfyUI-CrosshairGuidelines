@@ -2,7 +2,7 @@
 [project]
 name = "comfyui-crosshairguidelines" # Unique identifier for your node. Immutable after creation.
 description = "Crosshair guidelines to help align nodes and groups while moving or resizing."
-version = "0.1.1" # Custom node version. Must be semantically versioned.
+version = "0.1.2" # Custom node version. Must be semantically versioned.
 license = { file = "LICENSE.txt" }
 dependencies  = [] # Filled in from requirements.txt
 

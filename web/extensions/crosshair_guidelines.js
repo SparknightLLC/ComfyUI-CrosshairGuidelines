@@ -2002,6 +2002,14 @@ function install_global_pointer_listeners(canvas)
 		reset();
 		window.__crosshair_multi_select_modifier_down = false;
 	};
+	const on_visibility_change = () =>
+	{
+		if (typeof document !== "undefined" && document.visibilityState === "hidden")
+		{
+			reset();
+			window.__crosshair_multi_select_modifier_down = false;
+		}
+	};
 	window.addEventListener("pointerdown", on_global_down, { passive: true, capture: true });
 	window.addEventListener("mousedown", on_global_down, { passive: true, capture: true });
 	window.addEventListener("pointermove", on_global_move, { passive: true, capture: true });
@@ -2011,6 +2019,10 @@ function install_global_pointer_listeners(canvas)
 	window.addEventListener("keydown", on_key_down, { passive: true, capture: true });
 	window.addEventListener("keyup", on_key_up, { passive: true, capture: true });
 	window.addEventListener("blur", on_window_blur, { passive: true });
+	if (typeof document !== "undefined")
+	{
+		document.addEventListener("visibilitychange", on_visibility_change, { passive: true });
+	}
 	window.__crosshair_global_pointer_listeners_installed = true;
 }
 
@@ -5877,9 +5889,20 @@ function compute_interaction_state(canvas, ctx)
 		|| !!drag_group_target
 		|| !!activity?.resize_group
 		|| !!activity?.move_group;
+	const has_explicit_group_action = !!resize_group
+		|| !!drag_group_target
+		|| (pointer_active && !!canvas.__crosshair_group_resize_latched)
+		|| !!get_canvas_drag_group(canvas)
+		|| !!get_canvas_resize_group(canvas);
 	const has_latched_resize = (!!canvas.__crosshair_node_resize_latched && !!canvas.__crosshair_node_resize_target)
 		|| !!resize_session_target;
-	if (has_group_activity && !has_explicit_node_action && !has_latched_resize)
+	if (has_explicit_group_action && !has_latched_resize)
+	{
+		resize_node_candidate = null;
+		resize_corner_hint = null;
+		drag_node_target = null;
+	}
+	else if (has_group_activity && !has_explicit_node_action && !has_latched_resize)
 	{
 		resize_node_candidate = null;
 		resize_corner_hint = null;

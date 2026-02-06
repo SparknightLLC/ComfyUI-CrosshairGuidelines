@@ -1,5 +1,13 @@
 All notable changes to this project will be documented in this file.
 
+<details><summary>0.1.2 - 6 February 2026</summary>
+
+### Fixed
+- Fixed intermittent extra crosshairs during group moves (especially after tab switching) by prioritizing explicit group interactions over node move targets during interaction-state resolution.
+- Fixed stale crosshair interaction state persisting across tab switches by resetting pointer/interaction state on document `visibilitychange` when the page becomes hidden.
+
+</details>
+
 <details><summary>0.1.1 - 6 January 2026</summary>
 
 ### Fixed
