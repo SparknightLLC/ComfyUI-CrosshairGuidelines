@@ -35,7 +35,10 @@ const OPACITY_EXEMPT_SLOT_RADIUS_PX = 10;
 const OPACITY_EXEMPT_DRAW_POINT_PADDING_PX = 2;
 const ACTIVITY_SCAN_INTERVAL_MS = 32;
 const SLOT_LABEL_HITBOX_PX = 88;
-const SLOT_ROW_HITBOX_PX = 16;
+const SLOT_ROW_HITBOX_PX = 20;
+const SLOT_HANDLE_HITBOX_PX = 10;
+const SLOT_HANDLE_HITBOX_COMPACT_PX = 6;
+const SLOT_LABEL_EDGE_HITBOX_PX = 26;
 const DOM_NODE_SELECTORS = [
 	"[data-node-id]",
 	"[data-nodeid]",
@@ -1370,12 +1373,14 @@ function is_pointer_near_output_slot(canvas, node, graph_point)
 	}
 	const scale = canvas?.ds?.scale;
 	const safe_scale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-	const threshold = 10 / safe_scale;
-	const threshold_sq = threshold * threshold;
-	const label_span = SLOT_LABEL_HITBOX_PX / safe_scale;
 	const row_threshold = SLOT_ROW_HITBOX_PX / safe_scale;
 	for (let index = 0; index < outputs.length; index += 1)
 	{
+		const slot = outputs[index];
+		const label_text = get_slot_label_text(node, slot);
+		const has_label_text = !!label_text;
+		const handle_hitbox = (has_label_text ? SLOT_HANDLE_HITBOX_PX : SLOT_HANDLE_HITBOX_COMPACT_PX) / safe_scale;
+		const threshold_sq = handle_hitbox * handle_hitbox;
 		const position = node.getConnectionPos(false, index);
 		if (!Array.isArray(position) || position.length < 2)
 		{
@@ -1387,9 +1392,16 @@ function is_pointer_near_output_slot(canvas, node, graph_point)
 		{
 			return true;
 		}
+		if (!label_text)
+		{
+			continue;
+		}
+		const label_span = estimate_slot_label_span_px(label_text) / safe_scale;
+		const label_edge_threshold = Math.min(label_span, SLOT_LABEL_EDGE_HITBOX_PX / safe_scale);
 		const within_row = Math.abs(dy) <= row_threshold;
-		const within_output_label = graph_point[0] >= (position[0] - label_span)
-			&& graph_point[0] <= (position[0] + threshold);
+		const label_distance = position[0] - graph_point[0];
+		const within_output_label = label_distance >= (-handle_hitbox)
+			&& label_distance <= label_edge_threshold;
 		if (within_row && within_output_label)
 		{
 			return true;
@@ -1415,12 +1427,14 @@ function is_pointer_near_input_slot(canvas, node, graph_point)
 	}
 	const scale = canvas?.ds?.scale;
 	const safe_scale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-	const threshold = 10 / safe_scale;
-	const threshold_sq = threshold * threshold;
-	const label_span = SLOT_LABEL_HITBOX_PX / safe_scale;
 	const row_threshold = SLOT_ROW_HITBOX_PX / safe_scale;
 	for (let index = 0; index < inputs.length; index += 1)
 	{
+		const slot = inputs[index];
+		const label_text = get_slot_label_text(node, slot);
+		const has_label_text = !!label_text;
+		const handle_hitbox = (has_label_text ? SLOT_HANDLE_HITBOX_PX : SLOT_HANDLE_HITBOX_COMPACT_PX) / safe_scale;
+		const threshold_sq = handle_hitbox * handle_hitbox;
 		const position = node.getConnectionPos(true, index);
 		if (!Array.isArray(position) || position.length < 2)
 		{
@@ -1432,15 +1446,80 @@ function is_pointer_near_input_slot(canvas, node, graph_point)
 		{
 			return true;
 		}
+		if (!label_text)
+		{
+			continue;
+		}
+		const label_span = estimate_slot_label_span_px(label_text) / safe_scale;
+		const label_edge_threshold = Math.min(label_span, SLOT_LABEL_EDGE_HITBOX_PX / safe_scale);
 		const within_row = Math.abs(dy) <= row_threshold;
-		const within_input_label = graph_point[0] >= (position[0] - threshold)
-			&& graph_point[0] <= (position[0] + label_span);
+		const label_distance = graph_point[0] - position[0];
+		const within_input_label = label_distance >= (-handle_hitbox)
+			&& label_distance <= label_edge_threshold;
 		if (within_row && within_input_label)
 		{
 			return true;
 		}
 	}
 	return false;
+}
+
+function is_node_collapsed_for_slots(node)
+{
+	if (!node || typeof node !== "object")
+	{
+		return false;
+	}
+	return !!(node.flags?.collapsed || node.collapsed || node._collapsed);
+}
+
+function get_slot_label_text(node, slot)
+{
+	if (!slot || is_node_collapsed_for_slots(node))
+	{
+		return "";
+	}
+	const label = typeof slot.label === "string" ? slot.label.trim() : "";
+	if (label)
+	{
+		return label;
+	}
+	const name = typeof slot.name === "string" ? slot.name.trim() : "";
+	if (name)
+	{
+		return name;
+	}
+	return "";
+}
+
+function estimate_slot_label_span_px(text)
+{
+	if (!text)
+	{
+		return 0;
+	}
+	let width = 0;
+	for (const ch of text)
+	{
+		if (/\s/.test(ch))
+		{
+			width += 4;
+			continue;
+		}
+		if (/[A-Z]/.test(ch))
+		{
+			width += 8.5;
+			continue;
+		}
+		if (/[a-z0-9]/.test(ch))
+		{
+			width += 7.25;
+			continue;
+		}
+		width += 10.5;
+	}
+	const padded = width + 16;
+	return Math.min(160, Math.max(SLOT_LABEL_HITBOX_PX, padded));
 }
 
 function is_pointer_near_connection_slot(canvas, node, graph_point)
@@ -5544,21 +5623,40 @@ function compute_interaction_state(canvas, ctx)
 	let pointer_dragging = pointer_down_now
 		&& (!!canvas.__crosshair_pointer_dragging || dragging_by_distance || !!canvas.__crosshair_dragging);
 	let pointer_active = pointer_down_now;
+	let activity = null;
 	const links_opacity_before = Number.isFinite(canvas.__crosshair_links_current_opacity)
 		? canvas.__crosshair_links_current_opacity
 		: 1;
 	if (is_multi_select_modifier_active(canvas))
 	{
-		canvas.__crosshair_pointer_node = null;
-		canvas.__crosshair_drag_node_target = null;
-		canvas.__crosshair_drag_group_target = null;
-		canvas.__crosshair_node_resize_latched = false;
-		canvas.__crosshair_node_resize_target = null;
-		canvas.__crosshair_node_resize_corner = null;
-		canvas.__crosshair_node_resize_session_target = null;
-		canvas.__crosshair_node_resize_session_corner = null;
-		canvas.__crosshair_active_target = null;
-		return clear_interaction_visuals(canvas, ctx);
+		const explicit_move_or_resize = pointer_dragging
+			|| !!get_canvas_drag_node(canvas)
+			|| !!get_canvas_resize_node(canvas)
+			|| !!get_canvas_drag_group(canvas)
+			|| !!get_canvas_resize_group(canvas)
+			|| has_group_resize_flags(canvas);
+		if (!explicit_move_or_resize && pointer_down_now)
+		{
+			activity = detect_graph_activity(canvas);
+		}
+		const activity_move_or_resize = !!activity?.move_node
+			|| !!activity?.resize_node
+			|| !!activity?.move_group
+			|| !!activity?.resize_group
+			|| ((activity?.moved_nodes_count || 0) > 0);
+		if (!explicit_move_or_resize && !activity_move_or_resize)
+		{
+			canvas.__crosshair_pointer_node = null;
+			canvas.__crosshair_drag_node_target = null;
+			canvas.__crosshair_drag_group_target = null;
+			canvas.__crosshair_node_resize_latched = false;
+			canvas.__crosshair_node_resize_target = null;
+			canvas.__crosshair_node_resize_corner = null;
+			canvas.__crosshair_node_resize_session_target = null;
+			canvas.__crosshair_node_resize_session_corner = null;
+			canvas.__crosshair_active_target = null;
+			return clear_interaction_visuals(canvas, ctx);
+		}
 	}
 	if (pointer_down_now && !has_local_pointer && get_global_pointer_on_input())
 	{
@@ -5580,6 +5678,19 @@ function compute_interaction_state(canvas, ctx)
 	if (connecting_node)
 	{
 		canvas.__crosshair_pointer_on_connection = true;
+	}
+	if (pointer_down_now && canvas.__crosshair_pointer_on_connection && !connecting_node)
+	{
+		activity = detect_graph_activity(canvas);
+		const movement_detected = !!activity?.move_node
+			|| !!activity?.resize_node
+			|| !!activity?.move_group
+			|| !!activity?.resize_group
+			|| ((activity?.moved_nodes_count || 0) > 0);
+		if (movement_detected)
+		{
+			canvas.__crosshair_pointer_on_connection = false;
+		}
 	}
 	if (dragging_canvas)
 	{
@@ -5643,9 +5754,10 @@ function compute_interaction_state(canvas, ctx)
 	{
 		return clear_interaction_visuals(canvas, ctx);
 	}
-	const activity = pointer_down_now
-		? detect_graph_activity(canvas)
-		: null;
+	if (!activity && pointer_down_now)
+	{
+		activity = detect_graph_activity(canvas);
+	}
 	if (activity?.has_activity)
 	{
 		pointer_dragging = true;
@@ -6509,133 +6621,98 @@ function install_guidelines(canvas_override)
 				pointer_active,
 				has_idle_selection
 			} = interaction_state;
-	
+
 			const grid_size = is_snap_enabled() ? get_grid_size() : 0;
 
-		if (resize_node_active || has_resize_corner)
-		{
-			if (resize_mode === "off")
+			if (resize_node_active || has_resize_corner)
 			{
+				if (resize_mode === "off")
+				{
+					return;
+				}
+				const target_node = resize_node_candidate
+					|| drag_node_target
+					|| (allow_selected_fallback && selected_nodes.length === 1 ? selected_nodes[0] : null);
+				if (!target_node)
+				{
+					return;
+				}
+				const bounds = get_node_bounds(target_node);
+				if (resize_mode === "all")
+				{
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+				}
+				else
+				{
+					let corner = get_active_resize_corner(this, bounds);
+					if (resize_corner_hint)
+					{
+						corner = resize_corner_hint;
+					}
+					if (this.__crosshair_node_resize_latched && this.__crosshair_node_resize_corner)
+					{
+						corner = this.__crosshair_node_resize_corner;
+					}
+					corner = corner || "bottom_right";
+					let point = get_corner_point(bounds, corner) || [bounds.right, bounds.bottom];
+					if (grid_size)
+					{
+						point = [
+							snap_value(point[0], grid_size),
+							snap_value(point[1], grid_size)
+						];
+					}
+					draw_guidelines_at(ctx, this, point, visible_rect);
+				}
 				return;
 			}
-			const target_node = resize_node_candidate
-				|| drag_node_target
-				|| (allow_selected_fallback && selected_nodes.length === 1 ? selected_nodes[0] : null);
-			if (!target_node)
-			{
-				return;
-			}
-			const bounds = get_node_bounds(target_node);
-			if (resize_mode === "all")
-			{
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
-			}
-			else
-			{
-				let corner = get_active_resize_corner(this, bounds);
-				if (resize_corner_hint)
-				{
-					corner = resize_corner_hint;
-				}
-				if (this.__crosshair_node_resize_latched && this.__crosshair_node_resize_corner)
-				{
-					corner = this.__crosshair_node_resize_corner;
-				}
-				corner = corner || "bottom_right";
-				let point = get_corner_point(bounds, corner) || [bounds.right, bounds.bottom];
-				if (grid_size)
-				{
-					point = [
-						snap_value(point[0], grid_size),
-						snap_value(point[1], grid_size)
-					];
-				}
-				draw_guidelines_at(ctx, this, point, visible_rect);
-			}
-			return;
-		}
 
-		if (active_resize_group)
-		{
-			if (resize_mode === "off")
+			if (active_resize_group)
 			{
-				return;
-			}
-			const bounds = resize_group_bounds || get_group_bounds(active_resize_group);
-			if (!bounds)
-			{
-				return;
-			}
-			if (resize_mode === "all")
-			{
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
-			}
-			else
-			{
-				let point = [bounds.right, bounds.bottom];
-				if (grid_size)
+				if (resize_mode === "off")
 				{
-					point = [
-						snap_value(point[0], grid_size),
-						snap_value(point[1], grid_size)
-					];
+					return;
 				}
-				draw_guidelines_at(ctx, this, point, visible_rect);
-			}
-			return;
-		}
-
-		if (move_active && (drag_node_target || dragging_nodes_fallback))
-		{
-			if (move_mode === "off")
-			{
-				return;
-			}
-			const node_list = drag_node_target
-				? [drag_node_target]
-				: (selected_nodes.length ? selected_nodes : []);
-			for (const node of node_list)
-			{
-				if (!node)
+				const bounds = resize_group_bounds || get_group_bounds(active_resize_group);
+				if (!bounds)
 				{
-					continue;
+					return;
 				}
-				const bounds = snap_node_bounds_by_position(node, grid_size);
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
-				draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
-			}
-		}
-
-		if (move_active && drag_group)
-		{
-			if (move_mode === "off")
-			{
+				if (resize_mode === "all")
+				{
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+				}
+				else
+				{
+					let point = [bounds.right, bounds.bottom];
+					if (grid_size)
+					{
+						point = [
+							snap_value(point[0], grid_size),
+							snap_value(point[1], grid_size)
+						];
+					}
+					draw_guidelines_at(ctx, this, point, visible_rect);
+				}
 				return;
 			}
-			const bounds = snap_bounds_by_position(get_group_bounds(drag_group), grid_size);
-			if (!bounds)
-			{
-				return;
-			}
-			draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
-			draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
-			draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
-			draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
-		}
 
-		if (idle_mode === "all" && !drag_active && !pointer_active)
-		{
-			if (selected_nodes.length > 0)
+			if (move_active && (drag_node_target || dragging_nodes_fallback))
 			{
-				for (const node of selected_nodes)
+				if (move_mode === "off")
+				{
+					return;
+				}
+				const node_list = drag_node_target
+					? [drag_node_target]
+					: (selected_nodes.length ? selected_nodes : []);
+				for (const node of node_list)
 				{
 					if (!node)
 					{
@@ -6647,12 +6724,15 @@ function install_guidelines(canvas_override)
 					draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
 					draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
 				}
-				return;
 			}
 
-			if (selected_group)
+			if (move_active && drag_group)
 			{
-				const bounds = snap_bounds_by_position(get_group_bounds(selected_group), grid_size);
+				if (move_mode === "off")
+				{
+					return;
+				}
+				const bounds = snap_bounds_by_position(get_group_bounds(drag_group), grid_size);
 				if (!bounds)
 				{
 					return;
@@ -6662,7 +6742,39 @@ function install_guidelines(canvas_override)
 				draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
 				draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
 			}
-		}
+
+			if (idle_mode === "all" && !drag_active && !pointer_active)
+			{
+				if (selected_nodes.length > 0)
+				{
+					for (const node of selected_nodes)
+					{
+						if (!node)
+						{
+							continue;
+						}
+						const bounds = snap_node_bounds_by_position(node, grid_size);
+						draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+					}
+					return;
+				}
+
+				if (selected_group)
+				{
+					const bounds = snap_bounds_by_position(get_group_bounds(selected_group), grid_size);
+					if (!bounds)
+					{
+						return;
+					}
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+				}
+			}
 		}
 		catch (err)
 		{

@@ -1,5 +1,12 @@
 All notable changes to this project will be documented in this file.
 
+<details><summary>0.1.1 - 6 January 2026</summary>
+
+### Fixed
+- Fixed false connection-latch suppression when starting a node/group move near slot-label edges by releasing the slot latch as soon as real move/resize activity is detected without an active Comfy link-drag state.
+
+</details>
+
 <details><summary>0.1.0 - 6 January 2026</summary>
 
 ### Fixed
@@ -11,7 +18,6 @@ All notable changes to this project will be documented in this file.
 - Fixed crosshairs getting stuck hidden after dragging groups/nodes across another node's input/output slots by removing mid-drag connection-slot latching from interaction-state evaluation.
 - Fixed Nodes 2.0 output-link drags intermittently showing crosshairs by adding connection-slot fallback hit detection when no node-body hit is present and by honoring immediate canvas link-drag state at pointer-down.
 - Fixed output/input link drags started from slot label text (e.g., `STRING`) by expanding slot hit detection from point-only to slot-row/label hitboxes, improving consistency in both classic and Nodes 2.0.
-- Tuned slot-row/label hitbox calibration to better catch uppercase-label edge cases (e.g., `IMAGE`) where dragging from the text-to-socket gap could still show crosshairs. Not yet perfect in Nodes 2.0.
 - Removed redundant node-bounds recalculations in resize-candidate detection.
 
 </details>
