@@ -4,6 +4,7 @@ const EXTENSION_NAME = "comfy.crosshair_guidelines";
 const SETTING_MOVE_MODE_ID = "crosshair_guidelines.move_mode";
 const SETTING_RESIZE_MODE_ID = "crosshair_guidelines.resize_mode";
 const SETTING_IDLE_MODE_ID = "crosshair_guidelines.idle_mode";
+const SETTING_CTRL_BEHAVIOR_ID = "crosshair_guidelines.ctrl_behavior";
 const SETTING_COLOR_ID = "crosshair_guidelines.color";
 const SETTING_THICKNESS_ID = "crosshair_guidelines.thickness";
 const SETTING_LINK_OPACITY_ID = "crosshair_guidelines.link_opacity";
@@ -17,6 +18,7 @@ const DEFAULT_LINE_WIDTH = 2;
 const DEFAULT_MOVE_MODE = "all";
 const DEFAULT_RESIZE_MODE = "selected";
 const DEFAULT_IDLE_MODE = "off";
+const DEFAULT_CTRL_BEHAVIOR = "off";
 const DEFAULT_LINK_OPACITY_MULTIPLIER = 0.05;
 const DEFAULT_NODE_OPACITY_MULTIPLIER = 0.6;
 const DEFAULT_HIDE_ACTIVE_OUTLINE = false;
@@ -135,6 +137,7 @@ if (typeof window !== "undefined")
 let move_mode = DEFAULT_MOVE_MODE;
 let resize_mode = DEFAULT_RESIZE_MODE;
 let idle_mode = DEFAULT_IDLE_MODE;
+let ctrl_behavior_mode = DEFAULT_CTRL_BEHAVIOR;
 let line_color = DEFAULT_LINE_COLOR;
 let line_width = DEFAULT_LINE_WIDTH;
 let link_opacity_multiplier = DEFAULT_LINK_OPACITY_MULTIPLIER;
@@ -167,6 +170,15 @@ function normalize_idle_mode(value)
 		return value;
 	}
 	return DEFAULT_IDLE_MODE;
+}
+
+function normalize_ctrl_behavior(value)
+{
+	if (value === "off" || value === "show" || value === "hide")
+	{
+		return value;
+	}
+	return DEFAULT_CTRL_BEHAVIOR;
 }
 
 function normalize_line_color(value)
@@ -1572,6 +1584,9 @@ function set_pointer_down(canvas, is_down, point)
 		canvas.__crosshair_force_hide_until = 0;
 		canvas.__crosshair_pointer_dragging = false;
 		canvas.__crosshair_dragging = false;
+		canvas.__crosshair_selected_interaction_latched = false;
+		canvas.__crosshair_selected_start_candidate = false;
+		canvas.__crosshair_selected_start_candidate_captured = false;
 		canvas.__crosshair_last_node_states = new Map();
 		canvas.__crosshair_last_group_states = new Map();
 		canvas.__crosshair_activity_last_time = 0;
@@ -1608,6 +1623,9 @@ function set_pointer_down(canvas, is_down, point)
 		canvas.__crosshair_drag_node_target = null;
 		canvas.__crosshair_drag_group_target = null;
 		canvas.__crosshair_drag_start_on_selected = false;
+		canvas.__crosshair_selected_interaction_latched = false;
+		canvas.__crosshair_selected_start_candidate = false;
+		canvas.__crosshair_selected_start_candidate_captured = false;
 		canvas.__crosshair_multi_select_modifier_down = false;
 		canvas.__crosshair_drag_start = null;
 		canvas.__crosshair_node_opacity_active = false;
@@ -1771,6 +1789,157 @@ function is_multi_select_modifier_active(canvas)
 	return !!window.__crosshair_multi_select_modifier_down;
 }
 
+function is_selection_rectangle_active(canvas)
+{
+	if (!canvas)
+	{
+		return false;
+	}
+	return !!canvas.dragging_rectangle
+		|| !!canvas.draggingRectangle
+		|| !!canvas.dragging_selection_rectangle
+		|| !!canvas.draggingSelectionRectangle
+		|| !!canvas.dragging_selection
+		|| !!canvas.draggingSelection;
+}
+
+function has_selected_interaction_latch(canvas)
+{
+	if (!canvas)
+	{
+		return false;
+	}
+	return !!canvas.__crosshair_selected_interaction_latched
+		|| !!canvas.__crosshair_drag_start_on_selected
+		|| !!canvas.__crosshair_drag_group_target
+		|| !!canvas.__crosshair_group_resize_latched
+		|| !!canvas.__crosshair_node_resize_latched;
+}
+
+function is_selected_node_match(node, selected_nodes_set)
+{
+	if (!node)
+	{
+		return false;
+	}
+	if (selected_nodes_set?.has(node))
+	{
+		return true;
+	}
+	return is_node_selected(node);
+}
+
+function update_selected_interaction_latch(canvas, selected_nodes, selected_group, screen_point)
+{
+	if (!canvas)
+	{
+		return false;
+	}
+	const selected_list = Array.isArray(selected_nodes)
+		? selected_nodes.filter((node) => !!node)
+		: [];
+	const selected_nodes_set = selected_list.length > 0 ? new Set(selected_list) : null;
+	let started_on_selected_node = !!canvas.__crosshair_drag_start_on_selected;
+
+	if (!started_on_selected_node && selected_nodes_set && screen_point)
+	{
+		for (const node of selected_list)
+		{
+			if (is_screen_point_inside_node(canvas, node, screen_point))
+			{
+				started_on_selected_node = true;
+				break;
+			}
+		}
+	}
+
+	const pointer_node = canvas.__crosshair_latched_pointer_node
+		|| canvas.__crosshair_pointer_node
+		|| canvas.__crosshair_drag_node_target
+		|| canvas.__crosshair_node_resize_target
+		|| null;
+	if (!started_on_selected_node && is_selected_node_match(pointer_node, selected_nodes_set))
+	{
+		started_on_selected_node = true;
+	}
+	if (!started_on_selected_node && is_selected_node_match(canvas.__crosshair_drag_node_target, selected_nodes_set))
+	{
+		started_on_selected_node = true;
+	}
+	if (!started_on_selected_node && is_selected_node_match(canvas.__crosshair_node_resize_target, selected_nodes_set))
+	{
+		started_on_selected_node = true;
+	}
+
+	canvas.__crosshair_drag_start_on_selected = started_on_selected_node;
+
+	const selected_group_target = !!selected_group
+		&& (canvas.__crosshair_drag_group_target === selected_group
+			|| canvas.__crosshair_group_resize_target === selected_group);
+	const has_latched_selected_interaction = started_on_selected_node
+		|| selected_group_target
+		|| !!canvas.__crosshair_group_resize_latched
+		|| !!canvas.__crosshair_node_resize_latched;
+	if (has_latched_selected_interaction)
+	{
+		canvas.__crosshair_selected_interaction_latched = true;
+	}
+	return !!canvas.__crosshair_selected_interaction_latched;
+}
+
+function capture_selected_start_candidate(canvas, selected_nodes, selected_group, screen_point, graph_point)
+{
+	if (!canvas)
+	{
+		return false;
+	}
+	const selected_list = Array.isArray(selected_nodes)
+		? selected_nodes.filter((node) => !!node)
+		: [];
+	const selected_nodes_set = selected_list.length > 0 ? new Set(selected_list) : null;
+	const node_candidates = [
+		canvas.__crosshair_pointer_node,
+		canvas.__crosshair_latched_pointer_node,
+		canvas.__crosshair_drag_node_target,
+		canvas.__crosshair_node_resize_target,
+		get_node_at_screen_point(canvas, screen_point),
+		get_node_at_graph_point(canvas, graph_point || get_graph_mouse(canvas))
+	];
+	let started_on_selected_node = false;
+	for (const node_candidate of node_candidates)
+	{
+		if (is_selected_node_match(node_candidate, selected_nodes_set))
+		{
+			started_on_selected_node = true;
+			break;
+		}
+	}
+	let started_on_selected_group = false;
+	if (selected_group)
+	{
+		if (canvas.__crosshair_drag_group_target === selected_group
+			|| canvas.__crosshair_group_resize_target === selected_group
+			|| get_canvas_drag_group(canvas) === selected_group
+			|| get_canvas_resize_group(canvas) === selected_group)
+		{
+			started_on_selected_group = true;
+		}
+		else if (screen_point)
+		{
+			started_on_selected_group = is_screen_point_inside_group(canvas, selected_group, screen_point);
+		}
+	}
+	const selected_start_candidate = started_on_selected_node || started_on_selected_group;
+	canvas.__crosshair_selected_start_candidate = selected_start_candidate;
+	canvas.__crosshair_selected_start_candidate_captured = true;
+	if (selected_start_candidate)
+	{
+		canvas.__crosshair_drag_start_on_selected = canvas.__crosshair_drag_start_on_selected || started_on_selected_node;
+		canvas.__crosshair_selected_interaction_latched = true;
+	}
+	return selected_start_candidate;
+}
+
 function install_global_pointer_listeners(canvas)
 {
 	if (typeof window === "undefined")
@@ -1786,9 +1955,37 @@ function install_global_pointer_listeners(canvas)
 		const canvases = window.__crosshair_guidelines_canvases;
 		if (canvases instanceof Set)
 		{
-			return Array.from(canvases);
+			const entries = [];
+			for (const entry of canvases)
+			{
+				if (!entry)
+				{
+					canvases.delete(entry);
+					continue;
+				}
+				const element = get_canvas_element(entry);
+				if (element && typeof element.isConnected === "boolean" && !element.isConnected)
+				{
+					canvases.delete(entry);
+					continue;
+				}
+				entries.push(entry);
+			}
+			return entries;
 		}
 		return canvas ? [canvas] : [];
+	};
+	const redraw_entries = () =>
+	{
+		const entries = get_entries();
+		for (const entry of entries)
+		{
+			if (!entry)
+			{
+				continue;
+			}
+			request_canvas_redraw(entry);
+		}
 	};
 	const on_global_down = (event) =>
 	{
@@ -1828,6 +2025,7 @@ function install_global_pointer_listeners(canvas)
 			entry.__crosshair_last_group_states = new Map();
 			entry.__crosshair_drag_node_target = null;
 			entry.__crosshair_drag_group_target = null;
+			entry.__crosshair_drag_start_on_selected = false;
 			entry.__crosshair_node_resize_latched = false;
 			entry.__crosshair_node_resize_target = null;
 			entry.__crosshair_node_resize_corner = null;
@@ -1874,8 +2072,19 @@ function install_global_pointer_listeners(canvas)
 			{
 				entry.__crosshair_pointer_on_connection = true;
 			}
+			const selected_nodes = get_selected_nodes(entry).filter((node) => !!node);
+			const selected_group = get_selected_group(entry);
 			const resize_candidates = collect_resize_candidates(entry);
 			latch_node_resize_candidate(entry, resize_candidates, graph_point, screen_point);
+			entry.__crosshair_drag_node_target = get_drag_node_target(entry, screen_point, graph_point);
+			entry.__crosshair_drag_start_on_selected = !!screen_point
+				&& selected_nodes.some((node) => is_screen_point_inside_node(entry, node, screen_point));
+			const drag_start_on_group = !!screen_point
+				&& !!selected_group
+				&& is_screen_point_inside_group(entry, selected_group, screen_point);
+			entry.__crosshair_drag_group_target = drag_start_on_group ? selected_group : null;
+			entry.__crosshair_group_resize_latched = !!(selected_group && is_point_near_bottom_right(entry, get_group_bounds(selected_group)));
+			entry.__crosshair_group_resize_target = entry.__crosshair_group_resize_latched ? selected_group : null;
 			if (screen_point)
 			{
 				entry.__crosshair_last_mouse = screen_point;
@@ -1887,6 +2096,8 @@ function install_global_pointer_listeners(canvas)
 				entry.__crosshair_last_mouse_graph = graph_point;
 			}
 			set_pointer_down(entry, true, screen_point);
+			capture_selected_start_candidate(entry, selected_nodes, selected_group, screen_point, graph_point);
+			update_selected_interaction_latch(entry, selected_nodes, selected_group, screen_point);
 			record_pointer_activity(entry);
 		}
 	};
@@ -1977,6 +2188,18 @@ function install_global_pointer_listeners(canvas)
 		if (event?.key === "Control" || event?.key === "Meta")
 		{
 			window.__crosshair_multi_select_modifier_down = true;
+			const canvases = window.__crosshair_guidelines_canvases;
+			if (canvases instanceof Set)
+			{
+				for (const entry of canvases)
+				{
+					if (entry)
+					{
+						entry.__crosshair_multi_select_modifier_down = true;
+					}
+				}
+			}
+			redraw_entries();
 		}
 	};
 	const on_key_up = (event) =>
@@ -1995,6 +2218,7 @@ function install_global_pointer_listeners(canvas)
 					}
 				}
 			}
+			redraw_entries();
 		}
 	};
 	const on_window_blur = () =>
@@ -2140,6 +2364,8 @@ function install_pointer_listeners(canvas)
 		canvas.__crosshair_group_resize_latched = !!(selected_group && is_point_near_bottom_right(canvas, get_group_bounds(selected_group)));
 		canvas.__crosshair_group_resize_target = canvas.__crosshair_group_resize_latched ? selected_group : null;
 		set_pointer_down(canvas, true, screen_point);
+		capture_selected_start_candidate(canvas, selected_nodes, selected_group, screen_point, graph_point);
+		update_selected_interaction_latch(canvas, selected_nodes, selected_group, screen_point);
 	};
 
 	const on_pointer_up = () =>
@@ -5617,7 +5843,7 @@ function compute_interaction_state(canvas, ctx)
 	if (canvas.__crosshair_pointer_down && Number.isFinite(canvas.__crosshair_pointer_last_time))
 	{
 		const age = now - canvas.__crosshair_pointer_last_time;
-		if (age > POINTER_IDLE_RESET_MS && !canvas.__crosshair_mouse_down)
+		if (age > POINTER_IDLE_RESET_MS && !canvas.__crosshair_mouse_down && !get_global_pointer_down())
 		{
 			canvas.__crosshair_pointer_down = false;
 			canvas.__crosshair_pointer_dragging = false;
@@ -5625,6 +5851,7 @@ function compute_interaction_state(canvas, ctx)
 			canvas.__crosshair_pointer_on_input = false;
 			canvas.__crosshair_pointer_on_connection = false;
 			canvas.__crosshair_pointer_node = null;
+			canvas.__crosshair_selected_interaction_latched = false;
 		}
 	}
 
@@ -5639,14 +5866,57 @@ function compute_interaction_state(canvas, ctx)
 	const links_opacity_before = Number.isFinite(canvas.__crosshair_links_current_opacity)
 		? canvas.__crosshair_links_current_opacity
 		: 1;
-	if (is_multi_select_modifier_active(canvas))
+	const modifier_active = is_multi_select_modifier_active(canvas);
+	let selected_nodes = [];
+	let selected_group = null;
+	if (pointer_down_now || idle_mode === "all")
 	{
-		const explicit_move_or_resize = pointer_dragging
-			|| !!get_canvas_drag_node(canvas)
+		selected_nodes = get_selected_nodes(canvas).filter((node) => !!node);
+		selected_group = get_selected_group(canvas);
+	}
+	if (pointer_down_now)
+	{
+		if (!canvas.__crosshair_selected_start_candidate_captured)
+		{
+			capture_selected_start_candidate(canvas, selected_nodes, selected_group, mouse_screen, get_graph_mouse(canvas));
+		}
+		update_selected_interaction_latch(canvas, selected_nodes, selected_group, mouse_screen);
+	}
+	else
+	{
+		canvas.__crosshair_selected_interaction_latched = false;
+		canvas.__crosshair_selected_start_candidate = false;
+		canvas.__crosshair_selected_start_candidate_captured = false;
+	}
+	let selected_interaction_latched = pointer_down_now && has_selected_interaction_latch(canvas);
+	const selection_rectangle_active = is_selection_rectangle_active(canvas);
+	if (modifier_active && selection_rectangle_active)
+	{
+		canvas.__crosshair_pointer_node = null;
+		canvas.__crosshair_drag_node_target = null;
+		canvas.__crosshair_drag_group_target = null;
+		canvas.__crosshair_node_resize_latched = false;
+		canvas.__crosshair_node_resize_target = null;
+		canvas.__crosshair_node_resize_corner = null;
+		canvas.__crosshair_node_resize_session_target = null;
+		canvas.__crosshair_node_resize_session_corner = null;
+		canvas.__crosshair_selected_interaction_latched = false;
+		canvas.__crosshair_selected_start_candidate = false;
+		canvas.__crosshair_selected_start_candidate_captured = false;
+		canvas.__crosshair_active_target = null;
+		return clear_interaction_visuals(canvas, ctx);
+	}
+	if (modifier_active && !(ctrl_behavior_mode !== "off" && selected_interaction_latched))
+	{
+		const explicit_move_or_resize = !!get_canvas_drag_node(canvas)
 			|| !!get_canvas_resize_node(canvas)
 			|| !!get_canvas_drag_group(canvas)
 			|| !!get_canvas_resize_group(canvas)
-			|| has_group_resize_flags(canvas);
+			|| has_group_resize_flags(canvas)
+			|| !!canvas.__crosshair_drag_start_on_selected
+			|| !!canvas.__crosshair_drag_group_target
+			|| !!canvas.__crosshair_node_resize_latched
+			|| !!canvas.__crosshair_group_resize_latched;
 		if (!explicit_move_or_resize && pointer_down_now)
 		{
 			activity = detect_graph_activity(canvas);
@@ -5666,6 +5936,9 @@ function compute_interaction_state(canvas, ctx)
 			canvas.__crosshair_node_resize_corner = null;
 			canvas.__crosshair_node_resize_session_target = null;
 			canvas.__crosshair_node_resize_session_corner = null;
+			canvas.__crosshair_selected_interaction_latched = false;
+			canvas.__crosshair_selected_start_candidate = false;
+			canvas.__crosshair_selected_start_candidate_captured = false;
 			canvas.__crosshair_active_target = null;
 			return clear_interaction_visuals(canvas, ctx);
 		}
@@ -5754,6 +6027,9 @@ function compute_interaction_state(canvas, ctx)
 			canvas.__crosshair_node_resize_session_target = null;
 			canvas.__crosshair_node_resize_session_corner = null;
 			canvas.__crosshair_drag_start_on_selected = false;
+			canvas.__crosshair_selected_interaction_latched = false;
+			canvas.__crosshair_selected_start_candidate = false;
+			canvas.__crosshair_selected_start_candidate_captured = false;
 			canvas.__crosshair_drag_start = null;
 			canvas.__crosshair_global_pointer_latched = true;
 		}
@@ -5800,8 +6076,6 @@ function compute_interaction_state(canvas, ctx)
 	{
 		drag_node_target = canvas.__crosshair_pointer_node;
 	}
-	const selected_nodes = get_selected_nodes(canvas).filter((node) => !!node);
-	const selected_group = get_selected_group(canvas);
 	const allow_selected_fallback = has_local_pointer || !!canvas.__crosshair_drag_start_on_selected;
 	let resize_group = canvas.resizing_group
 		|| canvas.resizingGroup
@@ -5834,6 +6108,11 @@ function compute_interaction_state(canvas, ctx)
 	if (!drag_start_on_selected && activity?.moved_nodes_count > 1)
 	{
 		drag_start_on_selected = true;
+	}
+	if (drag_start_on_selected)
+	{
+		canvas.__crosshair_drag_start_on_selected = true;
+		canvas.__crosshair_selected_interaction_latched = true;
 	}
 	const resize_signal_active = !!resize_node_candidate
 		|| has_resize_corner
@@ -6067,6 +6346,61 @@ function compute_interaction_state(canvas, ctx)
 
 	const has_move_targets = move_active && (drag_node_active || drag_group || dragging_nodes_fallback);
 	const has_resize_targets = resize_node_active || has_resize_corner || !!active_resize_group;
+	const selected_nodes_set = selected_nodes.length > 0 ? new Set(selected_nodes) : null;
+	const started_on_selected_node = !!canvas.__crosshair_drag_start_on_selected;
+	const selected_drag_node_target = !!drag_node_target
+		&& (started_on_selected_node
+			|| is_selected_node_match(drag_node_target, selected_nodes_set));
+	const selected_resize_node_target = !!resize_node_candidate
+		&& (started_on_selected_node
+			|| is_selected_node_match(resize_node_candidate, selected_nodes_set));
+	const selected_node_move_or_resize = !!dragging_nodes_fallback
+		|| selected_drag_node_target
+		|| selected_resize_node_target;
+	const selected_group_move_or_resize = !!selected_group
+		&& ((active_resize_group && active_resize_group === selected_group)
+			|| (drag_group && drag_group === selected_group));
+	const selected_start_candidate = pointer_down_now
+		&& !!canvas.__crosshair_selected_start_candidate;
+	if (pointer_down_now && (selected_node_move_or_resize || selected_group_move_or_resize || selected_start_candidate))
+	{
+		canvas.__crosshair_selected_interaction_latched = true;
+	}
+	selected_interaction_latched = pointer_down_now && has_selected_interaction_latch(canvas);
+	const selected_move_or_resize_active = pointer_down_now
+		&& (has_resize_targets || has_move_targets)
+		&& (selected_node_move_or_resize || selected_group_move_or_resize);
+	const selected_interaction_active = selected_move_or_resize_active
+		|| selected_interaction_latched
+		|| selected_start_candidate;
+	const ctrl_show_interaction_candidate = pointer_down_now
+		&& !selection_rectangle_active
+		&& !connecting_node
+		&& !canvas.__crosshair_pointer_on_input
+		&& !canvas.__crosshair_pointer_on_connection
+		&& (
+			!!drag_node_target
+			|| !!resize_node_candidate
+			|| !!drag_group_target
+			|| !!active_resize_group
+			|| !!canvas.__crosshair_drag_node_target
+			|| !!canvas.__crosshair_drag_group_target
+			|| !!canvas.__crosshair_node_resize_latched
+			|| !!canvas.__crosshair_group_resize_latched
+			|| !!canvas.__crosshair_pointer_node
+			|| !!canvas.__crosshair_latched_pointer_node
+		);
+	const ctrl_show_mode = ctrl_behavior_mode === "show" && selected_interaction_active;
+	const ctrl_hide_mode = ctrl_behavior_mode === "hide" && selected_interaction_active;
+	const ctrl_hide_crosshairs = (ctrl_hide_mode && modifier_active)
+		|| (ctrl_show_mode && !modifier_active)
+		|| (ctrl_behavior_mode === "show" && ctrl_show_interaction_candidate && !modifier_active);
+	const ctrl_force_show_crosshairs = ctrl_show_mode && modifier_active;
+	const ctrl_show_hold_fallback_active = ctrl_force_show_crosshairs
+		&& pointer_down_now
+		&& !has_resize_targets
+		&& !has_move_targets
+		&& (selected_nodes.length > 0 || !!selected_group);
 
 	const interaction_active = has_resize_targets || has_move_targets;
 	canvas.__crosshair_interaction_active = interaction_active;
@@ -6262,8 +6596,12 @@ function compute_interaction_state(canvas, ctx)
 	apply_dom_node_opacity(canvas);
 	apply_dom_outline_visibility(canvas);
 
+	const can_draw_interaction = has_resize_targets || has_move_targets || ctrl_show_hold_fallback_active;
+	const can_draw = !ctrl_hide_crosshairs
+		&& (can_draw_interaction || (idle_mode === "all" && has_idle_selection));
+
 	return {
-		can_draw: has_resize_targets || has_move_targets || (idle_mode === "all" && has_idle_selection),
+		can_draw,
 		has_resize_targets,
 		has_move_targets,
 		resize_node_active,
@@ -6281,7 +6619,9 @@ function compute_interaction_state(canvas, ctx)
 		drag_group,
 		drag_active,
 		pointer_active,
-		has_idle_selection
+		has_idle_selection,
+		ctrl_force_show_crosshairs,
+		ctrl_show_hold_fallback_active
 	};
 }
 
@@ -6317,6 +6657,7 @@ function install_setting()
 		resize_mode = load_setting(SETTING_RESIZE_MODE_ID, DEFAULT_RESIZE_MODE, normalize_resize_mode);
 		idle_mode = load_setting(SETTING_IDLE_MODE_ID, DEFAULT_IDLE_MODE, normalize_idle_mode);
 	}
+	ctrl_behavior_mode = load_setting(SETTING_CTRL_BEHAVIOR_ID, DEFAULT_CTRL_BEHAVIOR, normalize_ctrl_behavior);
 	line_color = load_setting(SETTING_COLOR_ID, DEFAULT_LINE_COLOR, normalize_line_color);
 	line_width = load_setting(SETTING_THICKNESS_ID, DEFAULT_LINE_WIDTH, normalize_line_width);
 	link_opacity_multiplier = load_setting(SETTING_LINK_OPACITY_ID, DEFAULT_LINK_OPACITY_MULTIPLIER, normalize_link_opacity_multiplier);
@@ -6379,6 +6720,28 @@ function install_setting()
 	});
 
 	app.ui.settings.addSetting({
+		id: SETTING_CTRL_BEHAVIOR_ID,
+		category: build_setting_category("CTRL behavior"),
+		name: "CTRL behavior",
+		type: "combo",
+		options: [
+			{ text: "Show crosshairs", value: "show" },
+			{ text: "Hide crosshairs", value: "hide" },
+			{ text: "Off", value: "off" }
+		],
+		defaultValue: ctrl_behavior_mode,
+		attrs: {
+			title: "Applies only while holding Ctrl/Meta during move/resize of an already-selected node or group. Marquee multi-select always hides crosshairs."
+		},
+		onChange: (new_value) =>
+		{
+			ctrl_behavior_mode = normalize_ctrl_behavior(new_value);
+			save_setting(SETTING_CTRL_BEHAVIOR_ID, ctrl_behavior_mode);
+			request_canvas_redraw();
+		}
+	});
+
+	app.ui.settings.addSetting({
 		id: SETTING_COLOR_ID,
 		category: build_setting_category("Crosshair color"),
 		name: "Crosshair color",
@@ -6386,7 +6749,7 @@ function install_setting()
 		defaultValue: line_color,
 		attrs: {
 			placeholder: "#0B8CE9",
-			title: "Accepts CSS color values like #RRGGBB, rgb(...), or named colors."
+			title: "Accepts CSS color values like #RRGGBB, #RRGGBBAA, rgb(...), rgba(...), or named colors."
 		},
 		onChange: (new_value) =>
 		{
@@ -6540,6 +6903,8 @@ function install_guidelines(canvas_override)
 			&& !!selected_group
 			&& is_screen_point_inside_group(this, selected_group, screen_point);
 		this.__crosshair_drag_group_target = drag_start_on_group ? selected_group : null;
+		capture_selected_start_candidate(this, selected_nodes, selected_group, screen_point, graph_point);
+		update_selected_interaction_latch(this, selected_nodes, selected_group, screen_point);
 		request_canvas_redraw();
 	};
 
@@ -6642,14 +7007,20 @@ function install_guidelines(canvas_override)
 				drag_group,
 				drag_active,
 				pointer_active,
-				has_idle_selection
+				has_idle_selection,
+				ctrl_force_show_crosshairs,
+				ctrl_show_hold_fallback_active
 			} = interaction_state;
 
 			const grid_size = is_snap_enabled() ? get_grid_size() : 0;
+			const effective_move_mode = ctrl_force_show_crosshairs ? "all" : move_mode;
+			const effective_resize_mode = ctrl_force_show_crosshairs
+				? (resize_mode === "off" ? "selected" : resize_mode)
+				: resize_mode;
 
 			if (resize_node_active || has_resize_corner)
 			{
-				if (resize_mode === "off")
+				if (effective_resize_mode === "off")
 				{
 					return;
 				}
@@ -6661,7 +7032,7 @@ function install_guidelines(canvas_override)
 					return;
 				}
 				const bounds = get_node_bounds(target_node);
-				if (resize_mode === "all")
+				if (effective_resize_mode === "all")
 				{
 					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
 					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
@@ -6695,7 +7066,7 @@ function install_guidelines(canvas_override)
 
 			if (active_resize_group)
 			{
-				if (resize_mode === "off")
+				if (effective_resize_mode === "off")
 				{
 					return;
 				}
@@ -6704,7 +7075,7 @@ function install_guidelines(canvas_override)
 				{
 					return;
 				}
-				if (resize_mode === "all")
+				if (effective_resize_mode === "all")
 				{
 					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
 					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
@@ -6726,9 +7097,42 @@ function install_guidelines(canvas_override)
 				return;
 			}
 
+			if (ctrl_show_hold_fallback_active)
+			{
+				if (selected_nodes.length > 0)
+				{
+					for (const node of selected_nodes)
+					{
+						if (!node)
+						{
+							continue;
+						}
+						const bounds = snap_node_bounds_by_position(node, grid_size);
+						draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+						draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+					}
+					return;
+				}
+				if (selected_group)
+				{
+					const bounds = snap_bounds_by_position(get_group_bounds(selected_group), grid_size);
+					if (!bounds)
+					{
+						return;
+					}
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.top], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.left, bounds.bottom], visible_rect);
+					draw_guidelines_at(ctx, this, [bounds.right, bounds.bottom], visible_rect);
+					return;
+				}
+			}
+
 			if (move_active && (drag_node_target || dragging_nodes_fallback))
 			{
-				if (move_mode === "off")
+				if (effective_move_mode === "off")
 				{
 					return;
 				}
@@ -6751,7 +7155,7 @@ function install_guidelines(canvas_override)
 
 			if (move_active && drag_group)
 			{
-				if (move_mode === "off")
+				if (effective_move_mode === "off")
 				{
 					return;
 				}

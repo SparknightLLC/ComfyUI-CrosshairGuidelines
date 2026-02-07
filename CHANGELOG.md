@@ -1,5 +1,16 @@
 All notable changes to this project will be documented in this file.
 
+<details><summary>0.2.0 - 7 February 2026</summary>
+
+### Added
+- Added a `CTRL behavior` setting with options to show crosshairs, hide crosshairs, or ignore Ctrl/Meta (`off`) while moving/resizing an already-selected node or group.
+
+### Fixed
+- Fixed crosshairs appearing during Ctrl/Meta marquee multi-selection by explicitly suppressing guideline rendering while a selection rectangle is active.
+- Updated the Crosshair color tooltip to document support for hex values with alpha (for example `#RRGGBBAA`).
+
+</details>
+
 <details><summary>0.1.2 - 6 February 2026</summary>
 
 ### Fixed
