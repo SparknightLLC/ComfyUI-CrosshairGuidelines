@@ -1,5 +1,31 @@
 All notable changes to this project will be documented in this file.
 
+<details><summary>0.3.0 - 28 April 2026</summary>
+
+### Added
+- Added a native `diagnostics` setting. Diagnostics remain disabled by default.
+
+### Changed
+- Began staged JavaScript refactor by extracting disabled-by-default diagnostics and resize-session ownership into dedicated modules.
+- Extracted settings state, normalization, storage, and ComfyUI settings registration into a dedicated module.
+- Extracted opacity animation state helpers while preserving the existing opacity feature.
+- Extracted shared guideline rendering helpers for drawing bounds and snapped points.
+- Extracted graph geometry and selection predicates into a dedicated helper module.
+- Extracted graph node/group target resolution and identifier helpers into a dedicated module.
+- Extracted selected node/group resolution and selected-interaction latch predicates into a dedicated module.
+- Extracted graph/screen coordinate conversion and node/group hit-test helpers into a dedicated module.
+- Extracted Ctrl/Meta crosshair visibility policy from the interaction-state resolver.
+- Extracted input/connection tracking helpers for interactive controls, link drags, slot hitboxes, graph event targeting, and multi-select state.
+- Extracted pointer/reset/visual-clear interaction state mutations into a dedicated helper module.
+- Extracted selected-node/group interaction latching into a dedicated helper module.
+- Extracted DOM opacity/outline adaptation and draw-operation exemption bounds into a dedicated opacity adapter module.
+- Extracted the main interaction-state reducer into a dedicated module with explicit dependencies.
+- Extracted graph activity, resize-candidate, and resize-corner detection into a dedicated module.
+- Extracted the DOM compatibility patch for the link-opacity setting input into a small settings DOM helper.
+- Stabilized node resize sessions so the active resize target/corner is preserved across transient frame-state drops instead of being re-inferred every frame.
+
+</details>
+
 <details><summary>0.2.0 - 7 February 2026</summary>
 
 ### Added
@@ -8,6 +34,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Fixed crosshairs appearing during Ctrl/Meta marquee multi-selection by explicitly suppressing guideline rendering while a selection rectangle is active.
 - Updated the Crosshair color tooltip to document support for hex values with alpha (for example `#RRGGBBAA`).
+- Improved global pointer-listener stability/performance by pruning stale (disconnected) canvas entries from the internal canvas registry.
 
 </details>
 

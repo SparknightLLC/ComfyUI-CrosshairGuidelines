@@ -41,12 +41,20 @@ All settings appear under `Crosshair Guidelines` in ComfyUI settings.
 - `link_opacity`: Multiplier for link opacity during move/resize (0–1).
 - `node_opacity`: Multiplier for node/group opacity during move/resize (0–1).
 - `hide_active_outline`: Hides the active node/group outline while moving or resizing.
+- `diagnostics`: Writes Crosshair Guidelines debug output to the browser console. Disabled by default.
+
+* * *
+
+### Diagnostics
+
+- Optional diagnostics are disabled by default and can be enabled from the Crosshair Guidelines settings panel.
+- For troubleshooting settings-load issues only, `localStorage["crosshair_guidelines.diagnostics"] = "true"` or `window.__crosshair_guidelines_diagnostics = true` also enables diagnostics.
 
 * * *
 
 ### Notes
 
-- The JavaScript is unavoidably large (6k+ lines!) because it contains a lot of defensive compatibility logic for different ComfyUI / LiteGraph / Nodes 2.0 variants, plus input handling and rendering edge cases.
+- The JavaScript contains a lot of defensive compatibility logic for different ComfyUI / LiteGraph / Nodes 2.0 variants, plus input handling and rendering edge cases. Refactoring is being staged into smaller modules while preserving compatibility.
 - `link_opacity` and `node_opacity` affect all objects except the active one.
 - Link creation drags (including slot-handle/slot-label starts) suppress crosshairs.
 - Tested on Microsoft Edge.
