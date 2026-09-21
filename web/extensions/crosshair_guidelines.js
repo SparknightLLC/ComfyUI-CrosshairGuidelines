@@ -999,6 +999,16 @@ function get_canvas_from_context_or_node(ctx, node)
 	return null;
 }
 
+// Wrapping a draw method is idempotent, but finding the methods to wrap walks
+// every property descriptor of the canvas and its prototypes. The wrappers only
+// have to be reinstalled when the objects they were installed on are replaced,
+// such as a canvas that rebuilt its context on resize.
+function matches_installed_override_targets(installed_targets, targets)
+{
+	return Array.isArray(installed_targets) && installed_targets.length === targets.length
+		&& installed_targets.every((target, index) => target === targets[index]);
+}
+
 function install_link_draw_override(canvas)
 {
 	if (!canvas)
@@ -1008,6 +1018,29 @@ function install_link_draw_override(canvas)
 
 	install_link_opacity_ctx_patch(canvas);
 	set_ctx_canvas_ref(canvas);
+
+	const targets = [];
+	targets.push(canvas);
+	const canvas_proto = Object.getPrototypeOf(canvas);
+	if (canvas_proto)
+	{
+		targets.push(canvas_proto);
+	}
+	const litegraph_proto = window.LiteGraph?.LGraphCanvas?.prototype;
+	if (litegraph_proto && litegraph_proto !== canvas_proto)
+	{
+		targets.push(litegraph_proto);
+	}
+	const fallback_proto = window.LGraphCanvas?.prototype;
+	if (fallback_proto && fallback_proto !== canvas_proto && fallback_proto !== litegraph_proto)
+	{
+		targets.push(fallback_proto);
+	}
+	if (canvas.__crosshair_links_draw_override_installed
+		&& matches_installed_override_targets(canvas.__crosshair_links_draw_override_targets, targets))
+	{
+		return;
+	}
 
 	const get_link_draw_method_names = (target_list) =>
 	{
@@ -1134,24 +1167,6 @@ function install_link_draw_override(canvas)
 		return true;
 	};
 
-	const targets = [];
-	targets.push(canvas);
-	const canvas_proto = Object.getPrototypeOf(canvas);
-	if (canvas_proto)
-	{
-		targets.push(canvas_proto);
-	}
-	const litegraph_proto = window.LiteGraph?.LGraphCanvas?.prototype;
-	if (litegraph_proto && litegraph_proto !== canvas_proto)
-	{
-		targets.push(litegraph_proto);
-	}
-	const fallback_proto = window.LGraphCanvas?.prototype;
-	if (fallback_proto && fallback_proto !== canvas_proto && fallback_proto !== litegraph_proto)
-	{
-		targets.push(fallback_proto);
-	}
-
 	let installed = false;
 	const methods = get_link_draw_method_names(targets);
 	for (const target of targets)
@@ -1165,6 +1180,7 @@ function install_link_draw_override(canvas)
 	{
 		canvas.__crosshair_links_draw_override_installed = true;
 	}
+	canvas.__crosshair_links_draw_override_targets = targets;
 }
 
 function install_node_instance_draw_override()
@@ -1467,6 +1483,24 @@ function install_node_draw_override(canvas)
 	set_ctx_canvas_ref(canvas);
 	install_node_instance_draw_override();
 	install_group_instance_draw_override();
+
+	const targets = [];
+	targets.push(canvas);
+	const canvas_proto = Object.getPrototypeOf(canvas);
+	if (canvas_proto)
+	{
+		targets.push(canvas_proto);
+	}
+	const litegraph_proto = window.LiteGraph?.LGraphCanvas?.prototype;
+	if (litegraph_proto && litegraph_proto !== canvas_proto)
+	{
+		targets.push(litegraph_proto);
+	}
+	if (canvas.__crosshair_node_draw_override_installed
+		&& matches_installed_override_targets(canvas.__crosshair_node_draw_override_targets, targets))
+	{
+		return;
+	}
 
 	const get_draw_method_names = (target_list) =>
 	{
@@ -1778,19 +1812,6 @@ function install_node_draw_override(canvas)
 		return true;
 	};
 
-	const targets = [];
-	targets.push(canvas);
-	const canvas_proto = Object.getPrototypeOf(canvas);
-	if (canvas_proto)
-	{
-		targets.push(canvas_proto);
-	}
-	const litegraph_proto = window.LiteGraph?.LGraphCanvas?.prototype;
-	if (litegraph_proto && litegraph_proto !== canvas_proto)
-	{
-		targets.push(litegraph_proto);
-	}
-
 	let installed = false;
 	const methods = get_draw_method_names(targets);
 	for (const target of targets)
@@ -1804,6 +1825,7 @@ function install_node_draw_override(canvas)
 	{
 		canvas.__crosshair_node_draw_override_installed = true;
 	}
+	canvas.__crosshair_node_draw_override_targets = targets;
 }
 
 function install_link_opacity_ctx_patch(ctx_or_canvas)

@@ -1,5 +1,12 @@
 All notable changes to this project will be documented in this file.
 
+<details><summary>0.3.1 - 20 September 2026</summary>
+
+### Fixed
+- Stopped reinstalling the link and node draw overrides on every foreground draw. The install walks every property descriptor of the canvas and its LiteGraph prototypes to discover the methods it wraps, which measured ~6% of CPU during continuous pointer movement over a large workflow. The overrides are still reinstalled if the canvas or its prototypes are replaced.
+
+</details>
+
 <details><summary>0.3.0 - 28 April 2026</summary>
 
 ### Added
